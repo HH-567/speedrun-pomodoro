@@ -1,0 +1,1550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07080c">
+<title>自律番茄钟</title>
+<style>
+  * { box-sizing: border-box; }
+
+  :root {
+    --bg: #07080c;
+    --text: #e9ecf5;
+    --muted: #868ca3;
+    --dim: #5b6073;
+    --surface: rgba(255,255,255,.028);
+    --border: rgba(255,255,255,.07);
+    --mono: "Cascadia Mono", Consolas, "SF Mono", ui-monospace, monospace;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    min-height: 100vh;
+    padding: 0 18px 64px;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ---------- 背景光晕 ---------- */
+  .aura {
+    position: fixed;
+    top: -22vh; left: 50%;
+    width: 96vw; max-width: 940px; height: 72vh;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse at center, var(--aura, rgba(34,211,238,.10)) 0%, rgba(0,0,0,0) 65%);
+    filter: blur(24px);
+    pointer-events: none;
+    z-index: 0;
+    transition: background 1s ease;
+    animation: breathe 7s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: .7; transform: translateX(-50%) scale(1); }
+    50%      { opacity: 1;  transform: translateX(-50%) scale(1.06); }
+  }
+
+  body[data-phase="idle"]      { --aura: rgba(34,211,238,.10); --accent: #22d3ee; }
+  body[data-phase="focus"]     { --aura: rgba(56,189,248,.17); --accent: #22d3ee; }
+  body[data-phase="focusDone"] { --aura: rgba(34,197,94,.18);  --accent: #22c55e; }
+  body[data-phase="rest"]      { --aura: rgba(34,197,94,.13);  --accent: #22c55e; }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 26px 2px 6px;
+  }
+  .logo { display: flex; align-items: center; gap: 9px; }
+  .logo-mark { font-size: 19px; line-height: 1; filter: saturate(1.1); }
+  .logo-text {
+    font-size: 14px;
+    letter-spacing: 2px;
+    color: #b9c0d4;
+    font-weight: 600;
+  }
+  .tools { display: flex; gap: 6px; }
+  .icon-btn {
+    width: 38px; height: 38px;
+    display: grid; place-items: center;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #a8afc4;
+    cursor: pointer;
+    transition: background .2s, border-color .2s, color .2s, transform .12s;
+    line-height: 1;
+  }
+  .icon-btn svg {
+    width: 17px;
+    height: 17px;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .icon-btn .ico-off { display: none; }
+  .icon-btn[data-on="0"] .ico-on  { display: none; }
+  .icon-btn[data-on="0"] .ico-off { display: block; }
+  #btnSound[data-on="0"], #btnNotify[data-on="0"] { color: #4d5266; }
+
+  /* 齿轮：按下后旋转，表示设置面板已展开 */
+  #btnGear svg { transition: transform .45s cubic-bezier(.34,1.4,.64,1); }
+  #btnGear[data-on="1"] { color: #e9ecf5; }
+  #btnGear[data-on="1"] svg { transform: rotate(120deg); }
+  .icon-btn:hover { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.07); }
+  .icon-btn:active { transform: scale(.94); }
+
+  /* ---------- 主舞台 ---------- */
+  .stage { text-align: center; }
+
+  .phase {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    margin: 14px 0 4px;
+    height: 22px;
+    font-size: 12.5px;
+    letter-spacing: 4px;
+    color: var(--muted);
+    transition: color .4s;
+  }
+  .phase::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent, #22d3ee);
+    box-shadow: 0 0 12px var(--accent, #22d3ee);
+    animation: dotPulse 2.2s ease-in-out infinite;
+  }
+  @keyframes dotPulse {
+    0%, 100% { opacity: .35; transform: scale(.85); }
+    50%      { opacity: 1;   transform: scale(1.1); }
+  }
+
+  .ring-wrap {
+    position: relative;
+    width: min(330px, 74vw);
+    aspect-ratio: 1 / 1;
+    margin: 8px auto 0;
+  }
+  .ring-wrap.celebrate { animation: pop .9s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes pop {
+    0%   { transform: scale(1); }
+    28%  { transform: scale(1.045); }
+    62%  { transform: scale(.992); }
+    100% { transform: scale(1); }
+  }
+
+  .ring {
+    width: 100%; height: 100%;
+    display: block;
+    transform: rotate(-90deg);
+    filter: drop-shadow(0 0 16px var(--ring-glow, rgba(34,211,238,.28)));
+    transition: filter .6s ease;
+  }
+  body[data-phase="rest"], body[data-phase="focusDone"] { --ring-glow: rgba(34,197,94,.28); }
+
+  .ring-track {
+    fill: none;
+    stroke: rgba(255,255,255,.085);
+    stroke-width: 9;
+  }
+  .ring-bar {
+    fill: none;
+    stroke: url(#gradFocus);
+    stroke-width: 9;
+    stroke-linecap: round;
+    stroke-dasharray: 829.38;
+    stroke-dashoffset: 829.38;
+    opacity: 0;
+    transition: opacity .35s ease;
+  }
+
+  .center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    pointer-events: none;
+  }
+  .time {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(44px, 12.5vw, 66px);
+    font-weight: 600;
+    letter-spacing: -2px;
+    line-height: 1;
+    color: #ffffff;
+    text-shadow: 0 0 34px rgba(255,255,255,.13);
+    transition: color .5s;
+  }
+  .sub {
+    font-size: 12px;
+    color: var(--dim);
+    letter-spacing: .6px;
+    font-variant-numeric: tabular-nums;
+    min-height: 15px;
+  }
+
+  /* ---------- 主按钮 ---------- */
+  .main-btn {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    height: 58px;
+    margin: 26px auto 0;
+    border: none;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    color: #fff;
+    cursor: pointer;
+    transition: transform .18s ease, box-shadow .3s ease, background .35s ease, color .35s ease;
+    will-change: transform;
+  }
+  .main-btn.is-focus {
+    background: linear-gradient(135deg, #22d3ee 0%, #6366f1 100%);
+    box-shadow: 0 12px 34px -10px rgba(34,211,238,.6), inset 0 1px 0 rgba(255,255,255,.28);
+  }
+  .main-btn.is-focus:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 40px -10px rgba(34,211,238,.75), inset 0 1px 0 rgba(255,255,255,.3);
+  }
+  .main-btn.is-rest {
+    background: linear-gradient(135deg, #22c55e 0%, #a3e635 100%);
+    color: #06210f;
+    box-shadow: 0 12px 34px -10px rgba(34,197,94,.6), inset 0 1px 0 rgba(255,255,255,.35);
+  }
+  .main-btn.is-rest:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 40px -10px rgba(34,197,94,.75), inset 0 1px 0 rgba(255,255,255,.4);
+  }
+  .main-btn:active:not(:disabled) { transform: scale(.985); }
+
+  /* 灰色不可按 */
+  .main-btn:disabled,
+  .main-btn.is-disabled {
+    background: #1b1e28;
+    color: #5f6579;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.065);
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .abort-btn {
+    display: block;
+    margin: 12px auto 0;
+    padding: 7px 16px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: #525769;
+    font-family: inherit;
+    font-size: 12.5px;
+    letter-spacing: .5px;
+    cursor: pointer;
+    transition: color .2s, background .2s;
+  }
+  .abort-btn:hover { color: #aab0c4; background: rgba(255,255,255,.04); }
+  .abort-btn[data-armed="1"] { color: #ff6b6b; background: rgba(255,107,107,.08); }
+  .abort-btn[hidden] { display: none; }
+
+  /* ---------- 时长调节（主界面常驻） ---------- */
+  .durations {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 24px;
+    transition: opacity .3s ease;
+  }
+  .durations.is-locked { opacity: .4; }
+
+  .dur-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 5px 6px 5px 13px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.035);
+    border: 1px solid rgba(255,255,255,.06);
+  }
+  .dur-name {
+    font-size: 11.5px;
+    letter-spacing: 1.5px;
+    color: #767c92;
+    margin-right: 7px;
+  }
+  .dur-btn {
+    width: 26px; height: 26px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255,255,255,.06);
+    color: #b9c0d4;
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background .15s, color .15s, transform .1s;
+  }
+  .dur-btn:hover { background: rgba(255,255,255,.13); color: #ffffff; }
+  .dur-btn:active { transform: scale(.9); }
+  .dur-btn:disabled { cursor: not-allowed; }
+
+  .dur-val { display: flex; align-items: baseline; gap: 1px; padding: 0 2px; }
+  .dur-val input {
+    width: 40px;
+    padding: 0;
+    border: none;
+    background: none;
+    outline: none;
+    color: #ffffff;
+    font-family: var(--mono);
+    font-size: 15.5px;
+    font-weight: 600;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .dur-val input::-webkit-outer-spin-button,
+  .dur-val input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .dur-val input { -moz-appearance: textfield; }
+  .dur-val em { font-style: normal; font-size: 11px; color: #767c92; }
+
+  /* 流速行：只有名字和滑块，不显示任何数值 */
+  .speed-line { display: flex; align-items: center; gap: 12px; }
+  .speed-label {
+    flex: none;
+    width: 58px;
+    font-size: 13px;
+    color: #cfd4e3;
+    letter-spacing: .3px;
+  }
+  .speed-line input[type="range"] { flex: 1; }
+
+  /* ---------- 面板 ---------- */
+  .panel {
+    margin-top: 20px;
+    padding: 18px 20px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  /* 设置面板：默认收起，由齿轮按钮展开 */
+  .panel.settings {
+    overflow: hidden;
+    max-height: 860px;
+    transition: max-height .4s cubic-bezier(.4,0,.2,1),
+                opacity .3s ease,
+                margin-top .4s cubic-bezier(.4,0,.2,1),
+                padding-top .4s cubic-bezier(.4,0,.2,1),
+                padding-bottom .4s cubic-bezier(.4,0,.2,1),
+                border-color .3s ease;
+  }
+  .panel.settings.is-collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-color: transparent;
+    pointer-events: none;
+  }
+  .panel-head h2 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    color: var(--muted);
+  }
+  .lock-hint {
+    font-size: 11px;
+    color: #7c8299;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.05);
+    padding: 3px 10px;
+    border-radius: 999px;
+    letter-spacing: .3px;
+  }
+  .lock-hint[hidden] { display: none; }
+  .text-btn {
+    border: none;
+    background: transparent;
+    color: #4f5468;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: color .2s, background .2s;
+  }
+  .text-btn:hover { color: #aab0c4; background: rgba(255,255,255,.045); }
+  .text-btn[data-armed="1"] { color: #ff6b6b; background: rgba(255,107,107,.08); }
+
+  /* ---------- 设置行 ---------- */
+  .setting { padding: 13px 0; border-top: 1px solid rgba(255,255,255,.05); transition: opacity .3s ease; }
+  .setting.is-locked { opacity: .4; }
+  .setting.first { border-top: none; padding-top: 2px; }
+  .setting-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .setting-name { font-size: 13.5px; color: #cfd4e3; letter-spacing: .3px; }
+  .setting-hint {
+    font-size: 11.5px;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.1);
+    outline: none;
+    cursor: pointer;
+    margin: 0;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 15px; height: 15px;
+    border-radius: 50%;
+    background: #ffffff;
+    transition: transform .15s;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 15px; height: 15px;
+    border: none;
+    border-radius: 50%;
+    background: #ffffff;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.18); }
+  .range-focus::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(34,211,238,.20), 0 2px 8px rgba(0,0,0,.55); }
+  .range-focus::-moz-range-thumb     { box-shadow: 0 0 0 4px rgba(34,211,238,.20), 0 2px 8px rgba(0,0,0,.55); }
+  .range-rest::-webkit-slider-thumb  { box-shadow: 0 0 0 4px rgba(34,197,94,.20),  0 2px 8px rgba(0,0,0,.55); }
+  .range-rest::-moz-range-thumb      { box-shadow: 0 0 0 4px rgba(34,197,94,.20),  0 2px 8px rgba(0,0,0,.55); }
+
+  .badge {
+    flex: none;
+    min-width: 54px;
+    text-align: center;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: rgba(255,255,255,.055);
+    border: 1px solid rgba(255,255,255,.07);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: #d5dbec;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 可手动输入的倍率胶囊 */
+  .badge.speed-badge {
+    display: inline-flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 1px;
+    min-width: 62px;
+    padding: 4px 7px;
+    transition: border-color .2s, background .2s;
+  }
+  .badge.speed-badge:focus-within {
+    border-color: rgba(34,211,238,.5);
+    background: rgba(34,211,238,.08);
+  }
+  .speed-badge em { font-style: normal; font-size: 11px; color: #767c92; }
+  .speed-num {
+    width: 36px;
+    padding: 0;
+    border: none;
+    background: none;
+    outline: none;
+    color: #d5dbec;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 500;
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+  }
+  .speed-num::-webkit-outer-spin-button,
+  .speed-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .speed-num { -moz-appearance: textfield; }
+
+  /* ---------- 统计 ---------- */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+  @media (max-width: 500px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  .stat {
+    padding: 14px 6px 12px;
+    border-radius: 14px;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.035);
+    text-align: center;
+  }
+  .stat-num {
+    font-family: var(--mono);
+    font-size: 19px;
+    font-weight: 600;
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.5px;
+    line-height: 1.15;
+  }
+  .stat-unit { font-size: 10.5px; color: var(--dim); font-weight: 400; margin-left: 2px; letter-spacing: 0; }
+  .stat-label { margin-top: 6px; font-size: 11px; color: var(--dim); letter-spacing: .8px; }
+
+  /* ---------- 历史 ---------- */
+  .history {
+    max-height: 330px;
+    overflow-y: auto;
+    margin: 0 -6px;
+    padding: 0 6px;
+    overscroll-behavior: contain;
+  }
+  .history::-webkit-scrollbar { width: 6px; }
+  .history::-webkit-scrollbar-track { background: transparent; }
+  .history::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,.1);
+    border-radius: 999px;
+  }
+  .history::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); }
+
+  .rec {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 12px;
+    border-radius: 12px;
+    transition: background .2s;
+  }
+  .rec:hover { background: rgba(255,255,255,.032); }
+  .rec-dur {
+    font-size: 14px;
+    font-weight: 500;
+    color: #dfe4f1;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .rec-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 8px rgba(34,197,94,.7);
+    flex: none;
+  }
+  .rec-sub {
+    margin-top: 4px;
+    margin-left: 12px;
+    font-size: 11.5px;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .rec-when {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--dim);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    flex: none;
+  }
+  .empty {
+    padding: 26px 0 22px;
+    text-align: center;
+    font-size: 12.5px;
+    color: #4a4f61;
+    letter-spacing: .5px;
+  }
+
+  .foot {
+    margin-top: 26px;
+    text-align: center;
+    font-size: 11px;
+    color: #3d4254;
+    letter-spacing: .5px;
+  }
+
+  /* ---------- Toast ---------- */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 34px;
+    transform: translate(-50%, 18px);
+    padding: 12px 22px;
+    border-radius: 999px;
+    background: rgba(22,24,32,.96);
+    border: 1px solid rgba(255,255,255,.09);
+    color: #e9ecf5;
+    font-size: 13px;
+    letter-spacing: .3px;
+    box-shadow: 0 16px 40px rgba(0,0,0,.55);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .28s ease, transform .28s ease;
+    z-index: 60;
+    max-width: calc(100vw - 40px);
+    text-align: center;
+    line-height: 1.5;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body data-phase="idle">
+<div class="aura"></div>
+
+<main class="wrap">
+  <header class="head">
+    <div class="logo">
+      <span class="logo-mark">🍅</span>
+      <span class="logo-text">自律番茄钟</span>
+    </div>
+    <div class="tools">
+      <button class="icon-btn" id="btnSound" data-on="1" title="音效开关">
+        <svg class="ico-on" viewBox="0 0 24 24"><path d="M11 4.5 6.2 8.6H3.2v6.8h3L11 19.5z"/><path d="M15.4 8.6a4.8 4.8 0 0 1 0 6.8"/><path d="M17.9 6.2a8.2 8.2 0 0 1 0 11.6"/></svg>
+        <svg class="ico-off" viewBox="0 0 24 24"><path d="M11 4.5 6.2 8.6H3.2v6.8h3L11 19.5z"/><path d="M15.4 8.6a4.8 4.8 0 0 1 0 6.8"/><path d="M3 3l18 18"/></svg>
+      </button>
+      <button class="icon-btn" id="btnNotify" data-on="0" title="桌面通知">
+        <svg class="ico-on" viewBox="0 0 24 24"><path d="M18 8.4a6 6 0 1 0-12 0c0 6.6-2.6 8.4-2.6 8.4h17.2S18 15 18 8.4z"/><path d="M13.7 20.4a2 2 0 0 1-3.4 0"/></svg>
+        <svg class="ico-off" viewBox="0 0 24 24"><path d="M18 8.4a6 6 0 1 0-12 0c0 6.6-2.6 8.4-2.6 8.4h17.2S18 15 18 8.4z"/><path d="M3 3l18 18"/></svg>
+      </button>
+      <button class="icon-btn" id="btnGear" data-on="0" title="时间流速设置" aria-label="时间流速设置">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <section class="stage">
+    <div class="phase" id="phaseLabel">准备开始</div>
+
+    <div class="ring-wrap" id="ringWrap">
+      <svg class="ring" viewBox="0 0 300 300" aria-hidden="true">
+        <defs>
+          <linearGradient id="gradFocus" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#22d3ee"/>
+            <stop offset="100%" stop-color="#6366f1"/>
+          </linearGradient>
+          <linearGradient id="gradRest" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#22c55e"/>
+            <stop offset="100%" stop-color="#a3e635"/>
+          </linearGradient>
+        </defs>
+        <circle class="ring-track" cx="150" cy="150" r="132"/>
+        <circle class="ring-bar" id="ringBar" cx="150" cy="150" r="132"
+                stroke-dasharray="829.38" stroke-dashoffset="829.38"/>
+      </svg>
+      <div class="center">
+        <div class="time" id="timeText">25:00</div>
+        <div class="sub" id="subText">设定 25 分钟</div>
+      </div>
+    </div>
+
+    <button class="main-btn is-focus" id="mainBtn">开始自律</button>
+    <button class="abort-btn" id="abortBtn" hidden>放弃本轮</button>
+
+    <div class="durations" id="durations">
+      <div class="dur-group">
+        <span class="dur-name">自律</span>
+        <button class="dur-btn" id="focusMinus" title="减少自律时长">−</button>
+        <span class="dur-val">
+          <input id="focusMin" type="number" min="1" max="600" step="1" value="25" aria-label="自律时长（分钟）">
+          <em>分</em>
+        </span>
+        <button class="dur-btn" id="focusPlus" title="增加自律时长">+</button>
+      </div>
+      <div class="dur-group">
+        <span class="dur-name">休息</span>
+        <button class="dur-btn" id="restMinus" title="减少休息时长">−</button>
+        <span class="dur-val">
+          <input id="restMin" type="number" min="1" max="600" step="1" value="5" aria-label="休息时长（分钟）">
+          <em>分</em>
+        </span>
+        <button class="dur-btn" id="restPlus" title="增加休息时长">+</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel settings is-collapsed" id="settingsPanel">
+    <div class="panel-head">
+      <h2>时间流速</h2>
+      <span class="lock-hint" id="lockHint" hidden>本轮计时中 · 已锁定</span>
+    </div>
+
+    <div class="setting first">
+      <div class="speed-line">
+        <span class="speed-label">自律流速</span>
+        <input type="range" class="range-focus" id="focusSpeed" min="1" max="600" step="1" value="180"
+               aria-label="自律流速滑块">
+        <span class="badge speed-badge">
+          <em>×</em><input class="speed-num" id="focusSpeedNum" type="number" min="1" max="600" step="1"
+                           value="180" aria-label="自律流速倍率">
+        </span>
+      </div>
+    </div>
+
+    <div class="setting">
+      <div class="speed-line">
+        <span class="speed-label">放松流速</span>
+        <input type="range" class="range-rest" id="restSpeed" min="1" max="600" step="1" value="1"
+               aria-label="放松流速滑块">
+        <span class="badge speed-badge">
+          <em>×</em><input class="speed-num" id="restSpeedNum" type="number" min="1" max="600" step="1"
+                           value="1" aria-label="放松流速倍率">
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>数据概览</h2></div>
+    <div class="stats">
+      <div class="stat"><div class="stat-num" id="stTotal">0</div><div class="stat-label">累计次数</div></div>
+      <div class="stat"><div class="stat-num" id="stMin">0</div><div class="stat-label">累计自律</div></div>
+      <div class="stat"><div class="stat-num" id="stToday">0</div><div class="stat-label">今日次数</div></div>
+      <div class="stat"><div class="stat-num" id="stStreak">0</div><div class="stat-label">连续天数</div></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>自律记录</h2>
+      <button class="text-btn" id="btnClear">清空</button>
+    </div>
+    <div class="history" id="historyList"></div>
+  </section>
+
+  <div class="foot">所有数据仅保存在本机浏览器中</div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ================= 配置与存储 ================= */
+
+  var DEFAULTS = {
+    focusMin: 25,
+    focusSpeed: 180,   // 180× → 现实 1 秒 = 虚拟 3 分钟
+    restMin: 5,
+    restSpeed: 1,
+    sound: true,
+    notify: false
+  };
+
+  var CFG_KEY = 'tomato.cfg.v1';
+  var HIS_KEY = 'tomato.history.v1';
+
+  function loadJSON(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) { return fallback; }
+  }
+  function saveJSON(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
+  }
+
+  var cfg = Object.assign({}, DEFAULTS, loadJSON(CFG_KEY, {}));
+  var history = loadJSON(HIS_KEY, []);
+  if (!Array.isArray(history)) history = [];
+
+  function clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
+  function num(v, fallback) { var x = parseFloat(v); return isFinite(x) ? x : fallback; }
+
+  cfg.focusMin   = clamp(num(cfg.focusMin, 25), 1, 600);
+  cfg.restMin    = clamp(num(cfg.restMin, 5), 1, 600);
+  cfg.focusSpeed = clamp(Math.round(num(cfg.focusSpeed, 180)), 1, 600);
+  cfg.restSpeed  = clamp(Math.round(num(cfg.restSpeed, 1)), 1, 600);
+  cfg.sound      = !!cfg.sound;
+  cfg.notify     = !!cfg.notify;
+
+  /* ================= DOM ================= */
+
+  var els = {
+    phaseLabel: document.getElementById('phaseLabel'),
+    ringWrap:   document.getElementById('ringWrap'),
+    ringBar:    document.getElementById('ringBar'),
+    timeText:   document.getElementById('timeText'),
+    subText:    document.getElementById('subText'),
+    mainBtn:    document.getElementById('mainBtn'),
+    abortBtn:   document.getElementById('abortBtn'),
+    focusMin:   document.getElementById('focusMin'),
+    restMin:    document.getElementById('restMin'),
+    focusSpeed: document.getElementById('focusSpeed'),
+    restSpeed:  document.getElementById('restSpeed'),
+    focusSpeedNum: document.getElementById('focusSpeedNum'),
+    restSpeedNum:  document.getElementById('restSpeedNum'),
+    durations:  document.getElementById('durations'),
+    focusMinus: document.getElementById('focusMinus'),
+    focusPlus:  document.getElementById('focusPlus'),
+    restMinus:  document.getElementById('restMinus'),
+    restPlus:   document.getElementById('restPlus'),
+    btnSound:   document.getElementById('btnSound'),
+    btnNotify:  document.getElementById('btnNotify'),
+    btnGear:    document.getElementById('btnGear'),
+    settingsPanel: document.getElementById('settingsPanel'),
+    btnClear:   document.getElementById('btnClear'),
+    historyList: document.getElementById('historyList'),
+    lockHint:   document.getElementById('lockHint'),
+    toast:      document.getElementById('toast'),
+    stTotal:    document.getElementById('stTotal'),
+    stMin:      document.getElementById('stMin'),
+    stToday:    document.getElementById('stToday'),
+    stStreak:   document.getElementById('stStreak'),
+    gradFocus:  document.getElementById('gradFocus'),
+    gradRest:   document.getElementById('gradRest')
+  };
+
+  /* ================= 运行时状态 ================= */
+
+  var RADIUS = 132;
+  var CIRC = 2 * Math.PI * RADIUS;
+
+  var state = 'idle';       // idle | focus | focusDone | rest
+  var session = null;       // { phase, duration, speed, settingMin, virtual, realMs, done }
+  var rafId = null;
+  var lastTs = 0;
+  var lastTitleSec = -1;
+  var lastOffset = -1;
+  var lastStroke = '';
+  var lastOpacity = '';
+  var lastLocked = null;
+
+  var LABELS = {
+    idle: '准备开始',
+    focus: '自律中',
+    focusDone: '自律完成',
+    rest: '放松中'
+  };
+
+  var textCache = {};
+
+  /* ================= 工具 ================= */
+
+  function pad2(n) { return n < 10 ? '0' + n : String(n); }
+
+  function setText(el, value) {
+    if (textCache[el.id] !== value) {
+      textCache[el.id] = value;
+      el.textContent = value;
+    }
+  }
+
+  function fmtNum(n) {
+    if (!isFinite(n)) return '0';
+    return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
+  }
+
+  function fmtClock(sec, totalSec) {
+    sec = Math.max(0, Math.ceil(sec - 1e-6));
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = sec % 60;
+    if (totalSec >= 3600) return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+    return pad2(m) + ':' + pad2(s);
+  }
+
+  function dayKey(ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  function fmtWhen(ts) {
+    var d = new Date(ts);
+    var now = new Date();
+    var hh = pad2(d.getHours());
+    var mm = pad2(d.getMinutes());
+    var sameDay = dayKey(ts) === dayKey(now.getTime());
+    if (sameDay) return '今天 ' + hh + ':' + mm;
+
+    var y = new Date();
+    y.setDate(y.getDate() - 1);
+    if (dayKey(ts) === dayKey(y.getTime())) return '昨天 ' + hh + ':' + mm;
+
+    if (d.getFullYear() === now.getFullYear()) {
+      return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + hh + ':' + mm;
+    }
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  /* ================= Toast ================= */
+
+  var toastTimer = null;
+  function toast(msg) {
+    els.toast.textContent = msg;
+    els.toast.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      els.toast.classList.remove('show');
+    }, 2600);
+  }
+
+  /* ================= 音效 ================= */
+
+  var audioCtx = null;
+
+  function ensureAudio() {
+    if (audioCtx) return audioCtx;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try { audioCtx = new AC(); } catch (e) { audioCtx = null; }
+    return audioCtx;
+  }
+
+  function beep(kind) {
+    if (!cfg.sound) return;
+    var ctx = ensureAudio();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
+
+    var notes = kind === 'focus'
+      ? [523.25, 659.25, 783.99, 1046.5]
+      : [783.99, 659.25, 523.25];
+
+    var t0 = ctx.currentTime + 0.02;
+    notes.forEach(function (freq, i) {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      var start = t0 + i * 0.13;
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, start);
+
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.16, start + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0008, start + 0.55);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.6);
+    });
+  }
+
+  /* ================= 桌面通知 ================= */
+
+  function notify(title, body) {
+    if (!cfg.notify) return;
+    if (!('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    try {
+      new Notification(title, { body: body, silent: true });
+    } catch (e) {}
+  }
+
+  function updateNotifyBtn() {
+    var on = cfg.notify && ('Notification' in window) && Notification.permission === 'granted';
+    els.btnNotify.dataset.on = on ? '1' : '0';
+    els.btnNotify.title = on ? '桌面通知：已开启' : '桌面通知：已关闭';
+  }
+
+  function updateSoundBtn() {
+    els.btnSound.dataset.on = cfg.sound ? '1' : '0';
+    els.btnSound.title = cfg.sound ? '音效：已开启' : '音效：已关闭';
+  }
+
+  /* ================= 渲染 ================= */
+
+  function currentView() {
+    if (!session) {
+      var total = cfg.focusMin * 60;
+      return { total: total, elapsed: 0, remain: total, progress: 0 };
+    }
+    var duration = session.duration;
+    var elapsed = Math.min(session.virtual, duration);
+    return {
+      total: duration,
+      elapsed: elapsed,
+      remain: Math.max(0, duration - elapsed),
+      progress: duration > 0 ? elapsed / duration : 0
+    };
+  }
+
+  function subTextContent() {
+    if (!session) return '设定 ' + fmtNum(cfg.focusMin) + ' 分钟';
+    return '共 ' + fmtNum(session.settingMin) + ' 分钟';
+  }
+
+  function renderButton() {
+    var btn = els.mainBtn;
+    btn.classList.remove('is-focus', 'is-rest', 'is-disabled');
+
+    if (state === 'idle') {
+      btn.textContent = '开始自律';
+      btn.disabled = false;
+      btn.classList.add('is-focus');
+    } else if (state === 'focus') {
+      btn.textContent = '自律中…';
+      btn.disabled = true;
+      btn.classList.add('is-disabled');
+    } else if (state === 'focusDone') {
+      btn.textContent = '放松一下';
+      btn.disabled = false;
+      btn.classList.add('is-rest');
+    } else if (state === 'rest') {
+      btn.textContent = '放松中…';
+      btn.disabled = true;
+      btn.classList.add('is-disabled');
+    }
+  }
+
+  function render() {
+    document.body.dataset.phase = state;
+
+    var v = currentView();
+
+    setText(els.timeText, fmtClock(v.remain, v.total));
+    setText(els.subText, subTextContent());
+    setText(els.phaseLabel, LABELS[state]);
+
+    var offset = Math.round(CIRC * (1 - v.progress) * 100) / 100;
+    if (offset !== lastOffset) {
+      lastOffset = offset;
+      els.ringBar.style.strokeDashoffset = offset;
+    }
+
+    var useRest = (state === 'rest' || state === 'focusDone');
+    var stroke = useRest ? 'url(#gradRest)' : 'url(#gradFocus)';
+    if (stroke !== lastStroke) {
+      lastStroke = stroke;
+      els.ringBar.style.stroke = stroke;
+    }
+
+    // 进度为 0 时隐藏进度弧，避免起点处冒出一个圆头小点
+    var barOpacity = v.progress > 0 ? '1' : '0';
+    if (barOpacity !== lastOpacity) {
+      lastOpacity = barOpacity;
+      els.ringBar.style.opacity = barOpacity;
+    }
+
+    renderButton();
+
+    // 计时期间锁定设置项：本轮时长与流速在开始时已快照，避免误导
+    var locked = (state === 'focus' || state === 'rest');
+    if (locked !== lastLocked) {
+      lastLocked = locked;
+      els.lockHint.hidden = !locked;
+
+      var rows = document.querySelectorAll('.setting');
+      for (var i = 0; i < rows.length; i++) {
+        if (locked) rows[i].classList.add('is-locked');
+        else rows[i].classList.remove('is-locked');
+      }
+      if (locked) els.durations.classList.add('is-locked');
+      else els.durations.classList.remove('is-locked');
+
+      [els.focusMin, els.restMin, els.focusSpeed, els.restSpeed,
+       els.focusSpeedNum, els.restSpeedNum,
+       els.focusMinus, els.focusPlus, els.restMinus, els.restPlus].forEach(function (el) {
+        el.disabled = locked;
+      });
+    }
+
+    var showAbort = (state === 'focus' || state === 'rest');
+    if (els.abortBtn.hidden === showAbort) {
+      els.abortBtn.hidden = !showAbort;
+      if (!showAbort) disarmAbort();
+    }
+
+    var sec = Math.ceil(v.remain);
+    if (sec !== lastTitleSec) {
+      lastTitleSec = sec;
+      document.title = (state === 'focus' || state === 'rest')
+        ? fmtClock(v.remain, v.total) + ' · ' + LABELS[state]
+        : '自律番茄钟';
+    }
+  }
+
+  /* ================= 计时核心 ================= */
+
+  function stopLoop() {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  }
+
+  function startLoop() {
+    stopLoop();
+    lastTs = 0;
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function loop(ts) {
+    rafId = null;
+    if (!session || session.done) return;
+
+    if (!lastTs) lastTs = ts;
+    var dt = ts - lastTs;
+    lastTs = ts;
+
+    if (dt < 0) dt = 0;
+    if (dt > 500) dt = 500;
+
+    session.realMs += dt;
+    session.virtual += (dt / 1000) * session.speed;
+
+    if (session.virtual >= session.duration) {
+      session.virtual = session.duration;
+      render();
+      finish();
+      return;
+    }
+
+    render();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function celebrate() {
+    var el = els.ringWrap;
+    el.classList.remove('celebrate');
+    void el.offsetWidth;
+    el.classList.add('celebrate');
+    setTimeout(function () { el.classList.remove('celebrate'); }, 950);
+  }
+
+  function startFocus() {
+    var duration = cfg.focusMin * 60;
+    session = {
+      phase: 'focus',
+      duration: duration,
+      speed: cfg.focusSpeed,
+      settingMin: cfg.focusMin,
+      virtual: 0,
+      realMs: 0,
+      done: false
+    };
+    state = 'focus';
+    ensureAudio();
+    render();
+    startLoop();
+  }
+
+  function startRest() {
+    var duration = cfg.restMin * 60;
+    session = {
+      phase: 'rest',
+      duration: duration,
+      speed: cfg.restSpeed,
+      settingMin: cfg.restMin,
+      virtual: 0,
+      realMs: 0,
+      done: false
+    };
+    state = 'rest';
+    render();
+    startLoop();
+  }
+
+  function finish() {
+    stopLoop();
+    var s = session;
+    if (!s) return;
+    s.done = true;
+
+    if (s.phase === 'focus') {
+      addRecord(s);
+      state = 'focusDone';
+      render();
+      celebrate();
+      beep('focus');
+      notify('自律完成', '你完成了 ' + fmtNum(s.settingMin) + ' 分钟自律。');
+      toast('自律完成，点「放松一下」犒劳自己');
+    } else {
+      session = null;
+      state = 'idle';
+      lastTitleSec = -1;
+      render();
+      beep('rest');
+      notify('放松结束', '可以开始新一轮自律了。');
+      toast('放松结束，随时可以开始新一轮');
+    }
+  }
+
+  function abortSession() {
+    stopLoop();
+    session = null;
+    state = 'idle';
+    lastTitleSec = -1;
+    render();
+    toast('已放弃本轮，本轮不计入记录');
+  }
+
+  /* ================= 历史记录 ================= */
+
+  function addRecord(s) {
+    history.unshift({
+      ts: Date.now(),
+      focusMin: Math.round(s.settingMin * 100) / 100,
+      virtualSec: Math.round(s.duration),
+      realMs: Math.round(s.realMs),
+      speed: s.speed
+    });
+    if (history.length > 500) history.length = 500;
+    saveJSON(HIS_KEY, history);
+    renderStats();
+    renderHistory();
+  }
+
+  function renderStats() {
+    var total = history.length;
+
+    var totalSec = 0;
+    var todayCount = 0;
+    var todaySec = 0;
+    var today = dayKey(Date.now());
+
+    history.forEach(function (r) {
+      var vs = r.virtualSec || 0;
+      totalSec += vs;
+      if (dayKey(r.ts) === today) {
+        todayCount += 1;
+        todaySec += vs;
+      }
+    });
+
+    setText(els.stTotal, String(total));
+
+    if (totalSec >= 3600) {
+      var h = totalSec / 3600;
+      els.stMin.innerHTML = fmtNum(Math.round(h * 10) / 10) + '<span class="stat-unit">小时</span>';
+    } else {
+      els.stMin.innerHTML = String(Math.round(totalSec / 60)) + '<span class="stat-unit">分钟</span>';
+    }
+
+    els.stToday.innerHTML = String(todayCount);
+
+    var streak = calcStreak();
+    els.stStreak.innerHTML = String(streak) + '<span class="stat-unit">天</span>';
+
+    // 避开未使用变量告警
+    void todaySec;
+  }
+
+  function calcStreak() {
+    if (!history.length) return 0;
+    var days = {};
+    history.forEach(function (r) { days[dayKey(r.ts)] = true; });
+
+    var d = new Date();
+    if (!days[dayKey(d.getTime())]) {
+      d.setDate(d.getDate() - 1);
+      if (!days[dayKey(d.getTime())]) return 0;
+    }
+
+    var n = 0;
+    while (days[dayKey(d.getTime())]) {
+      n += 1;
+      d.setDate(d.getDate() - 1);
+      if (n > 3650) break;
+    }
+    return n;
+  }
+
+  function renderHistory() {
+    if (!history.length) {
+      els.historyList.innerHTML = '<div class="empty">还没有记录，开始第一次自律吧</div>';
+      return;
+    }
+
+    var html = history.slice(0, 100).map(function (r) {
+      return '<div class="rec">' +
+        '<div class="rec-dur"><span class="rec-dot"></span>' + fmtNum(r.focusMin) + ' 分钟</div>' +
+        '<div class="rec-when">' + fmtWhen(r.ts) + '</div>' +
+      '</div>';
+    }).join('');
+
+    els.historyList.innerHTML = html;
+  }
+
+  /* ================= 交互 ================= */
+
+  // 主按钮
+  els.mainBtn.addEventListener('click', function () {
+    if (state === 'idle') startFocus();
+    else if (state === 'focusDone') startRest();
+  });
+
+  // 放弃本轮（二次点击确认）
+  var abortTimer = null;
+  function disarmAbort() {
+    if (abortTimer) { clearTimeout(abortTimer); abortTimer = null; }
+    els.abortBtn.dataset.armed = '0';
+    els.abortBtn.textContent = '放弃本轮';
+  }
+  els.abortBtn.addEventListener('click', function () {
+    if (els.abortBtn.dataset.armed === '1') {
+      disarmAbort();
+      abortSession();
+      return;
+    }
+    els.abortBtn.dataset.armed = '1';
+    els.abortBtn.textContent = '再点一次确认放弃';
+    if (abortTimer) clearTimeout(abortTimer);
+    abortTimer = setTimeout(disarmAbort, 3200);
+  });
+
+  // 空格快捷键
+  document.addEventListener('keydown', function (e) {
+    if (e.code !== 'Space' && e.key !== ' ') return;
+    var tag = (e.target && e.target.tagName ? e.target.tagName : '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'button') return;
+    if (state === 'idle' || state === 'focusDone') {
+      e.preventDefault();
+      els.mainBtn.click();
+    }
+  });
+
+  // 切换标签页时重置时间基准，避免回来时时间跳变
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) lastTs = 0;
+  });
+
+  /* ---------- 设置项 ---------- */
+
+  function bindMinInput(input, key) {
+    input.addEventListener('input', function () {
+      var v = parseFloat(input.value);
+      if (!isFinite(v) || v <= 0) return;
+      cfg[key] = clamp(v, 1, 600);
+      saveJSON(CFG_KEY, cfg);
+      if (state === 'idle') render();
+    });
+    input.addEventListener('change', function () {
+      var v = parseFloat(input.value);
+      cfg[key] = isFinite(v) ? clamp(v, 1, 600) : cfg[key];
+      input.value = cfg[key];
+      saveJSON(CFG_KEY, cfg);
+      if (state === 'idle') render();
+    });
+    input.addEventListener('blur', function () {
+      var v = parseFloat(input.value);
+      cfg[key] = isFinite(v) ? clamp(v, 1, 600) : cfg[key];
+      input.value = cfg[key];
+      saveJSON(CFG_KEY, cfg);
+      if (state === 'idle') render();
+    });
+  }
+
+  bindMinInput(els.focusMin, 'focusMin');
+  bindMinInput(els.restMin, 'restMin');
+
+  // 时长步进：数值本身不显示流速，但调节手感按量级自适应
+  function stepMin(key, dir) {
+    var cur = cfg[key];
+    var step = cur < 10 ? 1 : (cur < 60 ? 5 : 10);
+    cfg[key] = clamp(cur + dir * step, 1, 600);
+    els[key].value = cfg[key];
+    saveJSON(CFG_KEY, cfg);
+    if (state === 'idle') render();
+  }
+
+  els.focusMinus.addEventListener('click', function () { stepMin('focusMin', -1); });
+  els.focusPlus.addEventListener('click', function () { stepMin('focusMin', 1); });
+  els.restMinus.addEventListener('click', function () { stepMin('restMin', -1); });
+  els.restPlus.addEventListener('click', function () { stepMin('restMin', 1); });
+
+  // 不显示数值的滑块，用轨道填充长度表达当前流速位置
+  var FOCUS_FILL = 'rgba(34,211,238,.55)';
+  var REST_FILL = 'rgba(34,197,94,.55)';
+
+  function paintRange(input, fill) {
+    var min = Number(input.min) || 1;
+    var max = Number(input.max) || 600;
+    var val = Number(input.value) || min;
+    var p = (val - min) / (max - min) * 100;
+    if (!isFinite(p)) p = 0;
+    p = Math.max(0, Math.min(100, p));
+
+    input.style.background =
+      'linear-gradient(to right, ' + fill + ' 0%, ' + fill + ' ' + p + '%,' +
+      ' rgba(255,255,255,.1) ' + p + '%, rgba(255,255,255,.1) 100%)';
+  }
+
+  // 流速：滑块与倍率输入框双向同步；倍率只在设置面板里显示
+  function bindSpeed(slider, numInput, key, fill) {
+    function store(v) {
+      v = clamp(Math.round(v), 1, 600);
+      cfg[key] = v;
+      saveJSON(CFG_KEY, cfg);
+      return v;
+    }
+
+    // 拖滑块 → 回填输入框
+    slider.addEventListener('input', function () {
+      var v = store(parseInt(slider.value, 10) || 1);
+      slider.value = v;
+      paintRange(slider, fill);
+      if (numInput.value !== String(v)) numInput.value = v;
+    });
+
+    // 手输倍率 → 同步滑块位置（不覆盖用户正在键入的内容）
+    numInput.addEventListener('input', function () {
+      var v = parseInt(numInput.value, 10);
+      if (!isFinite(v)) return;
+      v = store(v);
+      slider.value = v;
+      paintRange(slider, fill);
+    });
+
+    // 确认/失焦时收口：越界、清空、非法输入都在这里规范化
+    function commit() {
+      var v = parseInt(numInput.value, 10);
+      var n = store(isFinite(v) ? v : cfg[key]);
+      numInput.value = n;
+      slider.value = n;
+      paintRange(slider, fill);
+    }
+    numInput.addEventListener('change', commit);
+    numInput.addEventListener('blur', commit);
+
+    // 聚焦时全选，方便直接覆盖
+    numInput.addEventListener('focus', function () { numInput.select(); });
+  }
+
+  bindSpeed(els.focusSpeed, els.focusSpeedNum, 'focusSpeed', FOCUS_FILL);
+  bindSpeed(els.restSpeed, els.restSpeedNum, 'restSpeed', REST_FILL);
+
+  // 音效开关
+  els.btnSound.addEventListener('click', function () {
+    cfg.sound = !cfg.sound;
+    updateSoundBtn();
+    saveJSON(CFG_KEY, cfg);
+    if (cfg.sound) beep('rest');
+  });
+
+  // 通知开关
+  els.btnNotify.addEventListener('click', function () {
+    if (!('Notification' in window)) {
+      toast('当前浏览器不支持桌面通知');
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      toast('通知权限已被拒绝，请在浏览器设置中允许');
+      return;
+    }
+    if (Notification.permission === 'granted') {
+      cfg.notify = !cfg.notify;
+      updateNotifyBtn();
+      saveJSON(CFG_KEY, cfg);
+      toast(cfg.notify ? '桌面通知已开启' : '桌面通知已关闭');
+      return;
+    }
+    Notification.requestPermission().then(function (p) {
+      cfg.notify = (p === 'granted');
+      updateNotifyBtn();
+      saveJSON(CFG_KEY, cfg);
+      if (cfg.notify) toast('桌面通知已开启');
+      else toast('通知权限未授予');
+    }).catch(function () {});
+  });
+
+  // 齿轮按钮：切换时间流速设置面板
+  var settingsOpen = false;
+  function setSettingsOpen(open) {
+    settingsOpen = open;
+    if (open) els.settingsPanel.classList.remove('is-collapsed');
+    else els.settingsPanel.classList.add('is-collapsed');
+    els.btnGear.dataset.on = open ? '1' : '0';
+    els.btnGear.title = open ? '收起时间流速设置' : '时间流速设置';
+  }
+  els.btnGear.addEventListener('click', function () {
+    setSettingsOpen(!settingsOpen);
+  });
+
+  // 清空记录（二次点击确认）
+  var clearTimer = null;
+  els.btnClear.addEventListener('click', function () {
+    if (!history.length) { toast('还没有记录'); return; }
+
+    if (els.btnClear.dataset.armed === '1') {
+      clearTimeout(clearTimer);
+      els.btnClear.dataset.armed = '0';
+      els.btnClear.textContent = '清空';
+      history = [];
+      saveJSON(HIS_KEY, history);
+      renderStats();
+      renderHistory();
+      toast('记录已清空');
+      return;
+    }
+
+    els.btnClear.dataset.armed = '1';
+    els.btnClear.textContent = '确认清空？';
+    clearTimeout(clearTimer);
+    clearTimer = setTimeout(function () {
+      els.btnClear.dataset.armed = '0';
+      els.btnClear.textContent = '清空';
+    }, 3200);
+  });
+
+  /* ================= 初始化 ================= */
+
+  function syncUI() {
+    els.focusMin.value = cfg.focusMin;
+    els.restMin.value = cfg.restMin;
+    els.focusSpeed.value = cfg.focusSpeed;
+    els.restSpeed.value = cfg.restSpeed;
+    paintRange(els.focusSpeed, FOCUS_FILL);
+    paintRange(els.restSpeed, REST_FILL);
+    els.focusSpeedNum.value = cfg.focusSpeed;
+    els.restSpeedNum.value = cfg.restSpeed;
+    updateSoundBtn();
+    updateNotifyBtn();
+  }
+
+  syncUI();
+  renderStats();
+  renderHistory();
+  render();
+  setSettingsOpen(false);
+
+})();
+</script>
+</body>
+</html>

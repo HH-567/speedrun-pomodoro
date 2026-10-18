@@ -1,0 +1,17 @@
+# 构建中间产物
+apk-build/out/
+*.zip
+
+# Android 构建工具链（体积大，用 apk-build/tools/get.sh 自行下载）
+apk-build/tools/sdk/
+apk-build/tools/jdk17/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+
+# 工作区数据（不属于项目）
+.workbuddy/
